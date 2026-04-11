@@ -17,18 +17,17 @@ var (
 )
 var binaryPresentCard string
 
-func Receiver() string {
-
-	// Открываем доступ к GPIO
+func Receiver(resultChan chan<- string) {
 	if err := rpio.Open(); err != nil {
-		log.Fatalf("Ошибка открытия GPIO: %v", err)
+		log.Printf("Ошибка открытия GPIO: %v", err)
+		return
 	}
+	// Закроется только в самом конце работы Receiver
 	defer rpio.Close()
 
 	pin0 := rpio.Pin(PinD0)
 	pin1 := rpio.Pin(PinD1)
 
-	// Настраиваем пины: вход с подтяжкой вверх и детекцией падающего фронта
 	pin0.Input()
 	pin0.PullUp()
 	pin0.Detect(rpio.FallEdge)
@@ -37,30 +36,36 @@ func Receiver() string {
 	pin1.PullUp()
 	pin1.Detect(rpio.FallEdge)
 
-	// Обработчики в горутинах
-	go func() {
-		for {
-			if pin0.EdgeDetected() {
-				mu.Lock()
-				bits += "0"
-				lastTick = time.Now()
-				mu.Unlock()
-			}
-			time.Sleep(50 * time.Microsecond)
-		}
-	}()
+	// Канал для остановки фоновых горутин
+	done := make(chan struct{})
 
-	go func() {
+	// Очищаем старые данные перед началом
+	mu.Lock()
+	bits = ""
+	mu.Unlock()
+
+	// Воркер для опроса пинов
+	worker := func(p rpio.Pin, bit string) {
 		for {
-			if pin1.EdgeDetected() {
-				mu.Lock()
-				bits += "1"
-				lastTick = time.Now()
-				mu.Unlock()
+			select {
+			case <-done: // Если получили сигнал об окончании — выходим из горутины
+				return
+			default:
+				if p.EdgeDetected() {
+					mu.Lock()
+					bits += bit
+					lastTick = time.Now()
+					mu.Unlock()
+				}
+				time.Sleep(50 * time.Microsecond)
 			}
-			time.Sleep(50 * time.Microsecond)
 		}
-	}()
+	}
+
+	go worker(pin0, "0")
+	go worker(pin1, "1")
+
+	var finalCard string
 
 	// Основной цикл проверки таймаута
 	for {
@@ -69,14 +74,24 @@ func Receiver() string {
 		mu.Lock()
 		if bits != "" && time.Since(lastTick) > Timeout {
 			if len(bits) >= MinBits {
-				binaryPresentCard += processCard(bits)
+				finalCard = processCard(bits)
 			}
 			bits = ""
-			break
+			mu.Unlock()
+			break // Выходим из цикла ожидания
 		}
 		mu.Unlock()
 	}
-	return binaryPresentCard
+
+	// 1. Сначала останавливаем горутины
+	close(done)
+	
+	// 2. Даем им микропаузу, чтобы они успели завершиться до rpio.Close()
+	time.Sleep(10 * time.Millisecond)
+
+	// 3. Отправляем результат
+	resultChan <- finalCard
+	// close(resultChan) // Закрывай канал здесь, если уверен, что больше никто в него не пишет
 }
 
 func processCard(binaryData string) string {

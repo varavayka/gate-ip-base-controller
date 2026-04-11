@@ -28,7 +28,6 @@ func Jammer() {
 	pin0 = rpio.Pin(PinD0)
 	pin1 = rpio.Pin(PinD1)
 
-	// Обработка Ctrl+C для корректного завершения
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -38,7 +37,6 @@ func Jammer() {
 		os.Exit(0)
 	}()
 
-	// Изначально разблокируем
 	jamOff()
 
 	reader := bufio.NewReader(os.Stdin)

@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
+	// "sync"
 	"log"
 	"os"
 
@@ -66,15 +68,18 @@ func cliMenu(countMenuItem int) (*int64, error) {
 	switch option {
 	case 1:
 		fmt.Println("Ожидаю карту...")
+
 	case 2:
 		fmt.Println("[+] Ожидаю номер карты в формате 093,12176")
 		fmt.Println("- Номер карты не должен иметь пробелов")
 		fmt.Println("- Номер карты не должен иметь никаких спец символов кроме [ , ]")
+
 	case 3:
 		fmt.Println("Управление:")
 		fmt.Println("  1 - ЗАБЛОКИРОВАТЬ считыватель")
 		fmt.Println("  0 - РАЗБЛОКИРОВАТЬ считыватель")
 		fmt.Println("  Ctrl+C - Выход (авто-разблокировка)")
+
 	}
 
 	return &option, nil
@@ -82,7 +87,23 @@ func cliMenu(countMenuItem int) (*int64, error) {
 }
 func main() {
 	options := map[int]func(){
-		1: func() { fmt.Println(wiegand.Receiver()) },
+		1: func() {
+			var wg sync.WaitGroup
+			wg.Add(1)
+		    
+			cardChan := make(chan string)
+			go wiegand.Receiver(cardChan)
+			go func(wg *sync.WaitGroup) {
+				defer wg.Done()
+				cardId := <-cardChan
+				fmt.Println(cardId) // подумать, в телеграме работает, а вот в cli уже нет
+
+			}(&wg)
+			
+
+			wg.Wait()
+
+		},
 		2: func() {
 			cardString, err := userInput()
 			if err != nil {
